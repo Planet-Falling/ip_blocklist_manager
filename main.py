@@ -10,7 +10,7 @@ from pathlib import Path
 
 from config import resolve_config
 from ip_manager import IPManager
-from firewall import get_firewall_backend
+from firewall import get_firewall_backend, check_env, prompt_backend
 from sources.spamhaus import SpamhausSource
 from sources.firehol import FireHOLSource
 from sources.blocklist_de import BlocklistDeSource
@@ -50,7 +50,7 @@ def create_sources(config: dict, data_dir: str) -> list:
     return sources
 
 
-def run_update(config: dict, force: bool = False) -> bool:
+def run_update(config: dict, force: bool = False, apply: bool = False) -> bool:
     general = config.get("general", {})
     data_dir = general.get("data_dir", "/var/lib/ip-blocklist")
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -59,6 +59,14 @@ def run_update(config: dict, force: bool = False) -> bool:
     max_entries = general.get("max_memory_entries", 1_000_000)
 
     ipm = IPManager(data_dir, max_entries)
+
+    if apply:
+        env_info = check_env()
+        chosen = prompt_backend(config, env_info)
+        # Temporarily override the config backend
+        config.setdefault("firewall", {})["backend"] = chosen
+        if chosen == "none":
+            logger.info("Firewall backend set to none, skipping firewall rules")
 
     firewall_config = config.get("firewall", {})
     fw = get_firewall_backend(firewall_config)
@@ -69,38 +77,49 @@ def run_update(config: dict, force: bool = False) -> bool:
         return False
 
     logger.info("Starting update with %d source(s)", len(sources))
-    all_ok = True
 
     for source in sources:
         ok = source.update()
         if ok:
             ipm.add_source_networks(source.name, source.get_networks())
         else:
-            logger.warning("Loading cached data for %s", source.name)
-            cached = source.load_cached()
-            if cached:
-                ipm.add_source_networks(f"{source.name} (cached)", cached)
-            else:
-                all_ok = False
+            logger.warning("Skipping %s (download failed)", source.name)
 
     merged = ipm.merge()
     ipm.save_merged()
 
     if fw and merged:
-        if firewall_config.get("flush_on_update", True) or force:
-            v4_nets = ipm.get_v4_networks()
-            v6_nets = ipm.get_v6_networks() if ipv6_enabled else []
-            fw.apply_rules(v4_nets, v6_nets)
-            logger.info("Applied firewall rules: %d IPv4 + %d IPv6", len(v4_nets), len(v6_nets))
+        v4_nets = ipm.get_v4_networks()
+        v6_nets = ipm.get_v6_networks() if ipv6_enabled else []
+
+        cmds = fw.generate_apply_commands(v4_nets, v6_nets)
+        print(f"\n{'=' * 60}")
+        print(f"  Firewall rules to block {len(v4_nets)} IPv4 + {len(v6_nets)} IPv6 networks")
+        print(f"  Backend: {firewall_config.get('backend', 'nftables')}")
+        print(f"{'=' * 60}")
+        fw.print_commands(cmds)
+        print(f"{'=' * 60}")
+
+        if apply:
+            resp = input("Apply these rules? [y/N] ").strip().lower()
+            if resp == "y":
+                if fw.execute_commands(cmds):
+                    logger.info("Firewall rules applied successfully")
+                else:
+                    logger.error("Some firewall commands failed")
+            else:
+                logger.info("Skipped applying firewall rules")
+        else:
+            logger.info("Use --apply to apply these firewall rules")
 
     logger.info("Update complete: %d total networks", len(merged))
-    return all_ok
+    return True
 
 
-def run_once(config_path: str | None = None) -> None:
+def run_once(config_path: str | None = None, apply: bool = False) -> None:
     config = resolve_config(config_path)
     setup_logging(config.get("general", {}).get("log_level", "INFO"))
-    run_update(config)
+    run_update(config, apply=apply)
 
 
 def run_daemon(config_path: str | None = None) -> None:
@@ -109,7 +128,7 @@ def run_daemon(config_path: str | None = None) -> None:
     general = config.get("general", {})
     data_dir = general.get("data_dir", "/var/lib/ip-blocklist")
 
-    logger.info("Starting IP Blocklist Manager daemon")
+    logger.info("Starting IP Blocklist Manager daemon (firewall rules not auto-applied in daemon mode)")
 
     run_update(config)
 
@@ -194,15 +213,38 @@ def show_status(config_path: str | None = None) -> None:
     print(f"{'=' * 50}\n")
 
 
-def flush_firewall(config_path: str | None = None) -> None:
+def flush_firewall(config_path: str | None = None, apply: bool = False) -> None:
     config = resolve_config(config_path)
+
+    if apply:
+        env_info = check_env()
+        chosen = prompt_backend(config, env_info)
+        config.setdefault("firewall", {})["backend"] = chosen
+
     fw_config = config.get("firewall", {})
     fw = get_firewall_backend(fw_config)
-    if fw:
-        fw.flush_rules()
-        logger.info("Firewall rules flushed")
-    else:
+    if not fw:
         logger.info("No firewall backend configured")
+        return
+
+    cmds = fw.generate_flush_commands()
+    print(f"\n{'=' * 60}")
+    print(f"  Commands to flush blocklist firewall rules")
+    print(f"{'=' * 60}")
+    fw.print_commands(cmds)
+    print(f"{'=' * 60}")
+
+    if apply:
+        resp = input("Flush these rules? [y/N] ").strip().lower()
+        if resp == "y":
+            if fw.execute_commands(cmds):
+                logger.info("Firewall rules flushed successfully")
+            else:
+                logger.error("Some flush commands failed")
+        else:
+            logger.info("Skipped flushing firewall rules")
+    else:
+        logger.info("Use --apply to execute these flush commands")
 
 
 def main() -> None:
@@ -218,6 +260,11 @@ def main() -> None:
         action="store_true",
         help="Force full update even if not due",
     )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually apply firewall rules (default: dry-run, only print commands)",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -228,13 +275,13 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "update":
-        run_once(args.config)
+        run_once(args.config, apply=args.apply)
     elif args.command == "daemon":
         run_daemon(args.config)
     elif args.command == "status":
         show_status(args.config)
     elif args.command == "flush":
-        flush_firewall(args.config)
+        flush_firewall(args.config, apply=args.apply)
     else:
         parser.print_help()
 
