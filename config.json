@@ -1,0 +1,62 @@
+{
+  "general": {
+    "data_dir": "/var/lib/ip-blocklist",
+    "log_level": "INFO",
+    "ipv6_enabled": true,
+    "max_memory_entries": 1000000
+  },
+  "firewall": {
+    "backend": "nftables",
+    "chain_v4": "BLOCKLIST_V4",
+    "chain_v6": "BLOCKLIST_V6",
+    "table": "filter",
+    "flush_on_update": true
+  },
+  "sources": {
+    "spamhaus": {
+      "enabled": true,
+      "name": "Spamhaus_DROP",
+      "urls": {
+        "txt": "https://www.spamhaus.org/drop/drop.txt",
+        "json_v4": "https://www.spamhaus.org/drop/drop_v4.json",
+        "json_v6": "https://www.spamhaus.org/drop/drop_v6.json"
+      },
+      "update_interval": 3600
+    },
+    "firehol": {
+      "enabled": true,
+      "name": "FireHOL",
+      "levels": [
+        {"level": 1, "url": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset", "enabled": true},
+        {"level": 2, "url": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level2.netset", "enabled": true},
+        {"level": 3, "url": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level3.netset", "enabled": false},
+        {"level": "webclient", "url": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_webclient.netset", "enabled": false},
+        {"level": "webserver", "url": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_webserver.netset", "enabled": false},
+        {"level": "anonymous", "url": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_anonymous.netset", "enabled": false}
+      ],
+      "update_interval": 300
+    },
+    "blocklist_de": {
+      "enabled": true,
+      "name": "Blocklist_de",
+      "categories": {
+        "all": "https://lists.blocklist.de/lists/all.txt",
+        "ssh": "https://lists.blocklist.de/lists/ssh.txt",
+        "mail": "https://lists.blocklist.de/lists/mail.txt",
+        "apache": "https://lists.blocklist.de/lists/apache.txt",
+        "imap": "https://lists.blocklist.de/lists/imap.txt",
+        "ftp": "https://lists.blocklist.de/lists/ftp.txt",
+        "bruteforcelogin": "https://lists.blocklist.de/lists/bruteforcelogin.txt",
+        "bots": "https://lists.blocklist.de/lists/bots.txt"
+      },
+      "enabled_categories": ["all"],
+      "update_interval": 1800
+    },
+    "dshield": {
+      "enabled": true,
+      "name": "DShield",
+      "url": "https://feeds.dshield.org/block.txt",
+      "update_interval": 86400
+    }
+  }
+}

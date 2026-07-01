@@ -1,0 +1,5 @@
+backend/__pycache__/main.cpython-312.pyc
+backend/engines/__pycache__/intent_classifier.cpython-312.pyc
+*.pyc
+frontend/node_modules/
+__pycache__

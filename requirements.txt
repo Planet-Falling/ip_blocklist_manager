@@ -1,0 +1,6 @@
+# All dependencies are part of Python standard library (3.12+).
+# No external packages required.
+# - urllib.request for HTTP
+# - ipaddress for CIDR handling
+# - json for config parsing
+# - logging, argparse, signal, subprocess, etc. all built-in
